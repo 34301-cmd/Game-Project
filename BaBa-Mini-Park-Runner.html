@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<title>Mini Park Runner - เด็กหญิงใส่แว่น</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(180deg, #1b1f3b 0%, #3d2f5c 45%, #7a4a5c 100%);
+    font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+    color: #eee;
+  }
+  h1 {
+    color: #ffe9b3;
+    text-shadow: 2px 2px 0 #3a2a55, 3px 3px 0 rgba(0,0,0,0.4);
+    letter-spacing: 1px;
+    margin: 14px 0 8px;
+  }
+  #gameWrap {
+    position: relative;
+    border: 6px solid #2a2440;
+    border-radius: 10px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    overflow: hidden;
+    background: #1b1f3b;
+  }
+  canvas { display: block; background: #1b1f3b; image-rendering: pixelated; }
+  #hud {
+    position: absolute;
+    top: 10px; left: 10px; right: 10px;
+    display: flex;
+    justify-content: space-between;
+    font-weight: bold;
+    font-size: 18px;
+    color: #ffe9b3;
+    text-shadow: 1px 1px 2px rgba(0,0,0,0.7);
+    pointer-events: none;
+  }
+  #overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(10,8,25,0.72);
+    color: #fff;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    gap: 14px;
+    padding: 20px;
+  }
+  #overlay h2 { margin: 0; font-size: 28px; color: #ffe9b3; }
+  #overlay p { margin: 0; font-size: 16px; opacity: 0.9; }
+  button {
+    cursor: pointer;
+    border: none;
+    padding: 10px 22px;
+    font-size: 16px;
+    border-radius: 8px;
+    background: #ff6fa8;
+    color: #2a1830;
+    font-weight: bold;
+    box-shadow: 0 3px 0 #b8447a;
+    transition: transform 0.05s;
+  }
+  button:active { transform: translateY(2px); box-shadow: 0 1px 0 #b8447a; }
+  button:disabled { background: #888; box-shadow: 0 3px 0 #555; cursor: not-allowed; color: #ddd; }
+  #controls { margin-top: 10px; color: #ffe9b3; text-shadow: 1px 1px 2px rgba(0,0,0,0.6); font-size: 14px; }
+  #soundBtn {
+    background: #4fa07a;
+    box-shadow: 0 3px 0 #2e6a4f;
+    font-size: 13px;
+    padding: 6px 14px;
+    color: #0e2a1c;
+  }
+</style>
+</head>
+<body>
+
+<h1>🌙 BaBa Mini Park Runner 🌆</h1>
+
+<div id="gameWrap">
+  <canvas id="game" width="800" height="300"></canvas>
+  <div id="hud">
+    <div id="scoreBox">Score: 0</div>
+    <div id="timeBox">Time: 60</div>
+    <div id="hearts">❤️❤️❤️</div>
+  </div>
+  <div id="overlay">
+    <h2>Mini Park Runner</h2>
+    <p>กด Space หรือ คลิก/แตะ เพื่อกระโดดข้ามอุปสรรคในสวนสาธารณะยามพลบค่ำ<br>มีชีวิตทั้งหมด 3 ชีวิต และเวลาเล่น 60 วินาที</p>
+    <button id="startBtn">เริ่มเกม ▶</button>
+  </div>
+</div>
+
+<div id="controls">
+  <button id="soundBtn">🔊 เปิด/ปิดเสียง</button>
+</div>
+
+<script>
+(function () {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+  const W = canvas.width, H = canvas.height;
+  const groundY = H - 50;
+
+  const scoreBox = document.getElementById('scoreBox');
+  const timeBox = document.getElementById('timeBox');
+  const heartsBox = document.getElementById('hearts');
+  const overlay = document.getElementById('overlay');
+  const startBtn = document.getElementById('startBtn');
+  const soundBtn = document.getElementById('soundBtn');
+
+  /* =========================================================
+     FUNCTION 4: ระบบเสียง (เพลงพื้นหลัง + เสียงเอฟเฟค)
+  ========================================================= */
+  let soundOn = true;
+  let audioCtx = null;
+  let bgmTimer = null;
+
+  function ensureAudio() {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+  }
+  function playTone(freq, duration, type, volume) {
+    if (!soundOn) return;
+    ensureAudio();
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = type || 'square';
+    osc.frequency.value = freq;
+    gain.gain.value = volume === undefined ? 0.08 : volume;
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start();
+    gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + duration);
+    osc.stop(audioCtx.currentTime + duration + 0.02);
+  }
+  function sfxJump() { playTone(520, 0.12, 'square', 0.09); setTimeout(() => playTone(740, 0.10, 'square', 0.07), 60); }
+  function sfxHit() { playTone(140, 0.22, 'sawtooth', 0.12); }
+  function sfxGameOver() {
+    playTone(300, 0.15, 'square', 0.1);
+    setTimeout(() => playTone(220, 0.15, 'square', 0.1), 150);
+    setTimeout(() => playTone(140, 0.35, 'square', 0.1), 300);
+  }
+  function sfxTimeUp() { playTone(660, 0.15, 'triangle', 0.1); setTimeout(() => playTone(880, 0.25, 'triangle', 0.1), 160); }
+
+  const bgmNotes = [392, 349, 330, 349, 392, 440, 392, 330]; // เมโลดี้เบา ๆ บรรยากาศยามเย็น
+  let bgmStep = 0;
+  function startBGM() {
+    stopBGM();
+    bgmTimer = setInterval(() => {
+      if (soundOn && running) playTone(bgmNotes[bgmStep % bgmNotes.length], 0.20, 'triangle', 0.035);
+      bgmStep++;
+    }, 280);
+  }
+  function stopBGM() { if (bgmTimer) { clearInterval(bgmTimer); bgmTimer = null; } }
+
+  soundBtn.addEventListener('click', () => {
+    ensureAudio();
+    soundOn = !soundOn;
+    soundBtn.textContent = soundOn ? '🔊 เปิด/ปิดเสียง' : '🔇 เปิด/ปิดเสียง';
+  });
+
+  /* =========================================================
+     สถานะเกม
+  ========================================================= */
+  let running = false;
+  let gameOverFinal = false;
+  let score = 0;
+  let lives = 3;
+  let timeLeft = 60;
+  let lastTimestamp = 0;
+  let timerAccumulator = 0;
+
+  const player = {
+    x: 70, y: groundY - 42, w: 30, h: 42,
+    vy: 0, jumping: false, gravity: 1600, jumpPower: -620
+  };
+
+  let groundOffset = 0;
+  const groundSpeed = 260;
+
+  /* =========================================================
+     FUNCTION 1: สุ่มเวลาการออกอุปสรรค / นก-หิ่งห้อย-ค้างคาว
+  ========================================================= */
+  let obstacles = [];
+  let decorations = []; // หิ่งห้อย, ค้างคาว
+  let obstacleTimer = 0;
+  let nextObstacleGap = randomObstacleGap();
+  let decoTimer = 0;
+  let nextDecoGap = randomDecoGap();
+
+  function randomObstacleGap() { return 0.8 + Math.random() * 1.4; }
+  function randomDecoGap() { return 1.2 + Math.random() * 2.0; }
+
+  // อุปสรรคธีมสวนสาธารณะยามเย็น/กลางคืน: ม้านั่ง, ถังขยะ, พุ่มไม้, หัวดับเพลิง
+  function spawnObstacle() {
+    const kinds = [
+      { w: 40, h: 22, type: 'bench',   color: '#6b4a2c' },
+      { w: 22, h: 28, type: 'trash',   color: '#555b63' },
+      { w: 30, h: 24, type: 'bush',    color: '#294d2e' },
+      { w: 16, h: 26, type: 'hydrant', color: '#c9403a' }
+    ];
+    const k = kinds[Math.floor(Math.random() * kinds.length)];
+    obstacles.push({ x: W + 20, y: groundY - k.h, w: k.w, h: k.h, color: k.color, type: k.type, passed: false });
+  }
+
+  function spawnDecoration() {
+    const isBat = Math.random() < 0.5;
+    if (isBat) {
+      decorations.push({ x: W + 20, y: 25 + Math.random() * 80, w: 18, h: 10, type: 'bat', speedMul: 1.5 + Math.random() * 0.6, flap: 0 });
+    } else {
+      decorations.push({ x: W + 20, y: 15 + Math.random() * 90, w: 4, h: 4, type: 'firefly', speedMul: 0.35 + Math.random() * 0.3, phase: Math.random() * 10 });
+    }
+  }
+
+  /* =========================================================
+     FUNCTION 3: ระบบนับจำนวนชีวิต (3 ชีวิต)
+  ========================================================= */
+  function loseLife() {
+    lives -= 1;
+    updateHearts();
+    sfxHit();
+    if (lives <= 0) endGame('gameover');
+    else player.invincibleUntil = performance.now() + 900;
+  }
+  function updateHearts() {
+    let s = '';
+    for (let i = 0; i < 3; i++) s += (i < lives ? '❤️' : '🤍');
+    heartsBox.textContent = s;
+  }
+
+  /* =========================================================
+     FUNCTION 2: เงื่อนไขจับเวลา 60 วินาที -> จบเกม + สรุปคะแนน
+  ========================================================= */
+  function endGame(reason) {
+    running = false;
+    stopBGM();
+    if (reason === 'gameover') {
+      gameOverFinal = true;
+      sfxGameOver();
+      showOverlay('เกมจบแล้ว! 💀', `หมดจำนวนชีวิตที่กำหนด (3 ชีวิต)<br>คะแนนสุดท้ายของคุณ: <b>${score}</b><br><br>ต้องเปิดไฟล์เกมใหม่เพื่อเล่นอีกครั้ง`, false);
+    } else if (reason === 'timeup') {
+      sfxTimeUp();
+      showOverlay('🌙 หมดเวลา 60 วินาที!', `สรุปผลการเล่น<br>คะแนนที่ทำได้: <b>${score}</b><br>ชีวิตที่เหลือ: <b>${lives}</b><br><br>กดปุ่มด้านล่างเพื่อเล่นใหม่`, true);
+    }
+  }
+  function showOverlay(title, html, canRestart) {
+    overlay.innerHTML = `<h2>${title}</h2><p>${html}</p>` +
+      (canRestart ? `<button id="startBtn2">เล่นอีกครั้ง 🔄</button>` : `<button disabled>ไม่สามารถเล่นซ้ำได้ (ต้องเปิดไฟล์ใหม่)</button>`);
+    overlay.style.display = 'flex';
+    if (canRestart) document.getElementById('startBtn2').addEventListener('click', resetAndStart);
+  }
+  function resetAndStart() {
+    if (gameOverFinal) return;
+    score = 0; lives = 3; timeLeft = 60;
+    obstacles = []; decorations = [];
+    player.y = groundY - player.h; player.vy = 0; player.jumping = false;
+    obstacleTimer = 0; nextObstacleGap = randomObstacleGap();
+    decoTimer = 0; nextDecoGap = randomDecoGap();
+    updateHearts();
+    scoreBox.textContent = 'Score: 0';
+    timeBox.textContent = 'Time: 60';
+    overlay.style.display = 'none';
+    running = true; lastTimestamp = 0;
+    ensureAudio(); startBGM();
+    requestAnimationFrame(loop);
+  }
+  startBtn.addEventListener('click', resetAndStart);
+
+  function jump() {
+    if (!running) return;
+    if (!player.jumping) { player.vy = player.jumpPower; player.jumping = true; sfxJump(); }
+  }
+  document.addEventListener('keydown', (e) => { if (e.code === 'Space') { e.preventDefault(); jump(); } });
+  canvas.addEventListener('mousedown', jump);
+  canvas.addEventListener('touchstart', (e) => { e.preventDefault(); jump(); }, { passive: false });
+
+  /* =========================================================
+     Drawing - ธีมสวนสาธารณะยามพลบค่ำ / กลางคืน (สไตล์ pixel)
+  ========================================================= */
+  const stars = [];
+  for (let i = 0; i < 40; i++) {
+    stars.push({ x: Math.random() * W, y: Math.random() * (groundY - 60), s: Math.random() < 0.8 ? 1 : 2, tw: Math.random() * 10 });
+  }
+  const lampPosts = [120, 380, 640, 900];
+  const clouds = [];
+  for (let i = 0; i < 6; i++) {
+    clouds.push({
+      baseX: Math.random() * (W + 300),
+      y: 18 + Math.random() * 60,
+      scale: 0.7 + Math.random() * 0.7,
+      speedMul: 0.12 + Math.random() * 0.1,
+      alpha: 0.18 + Math.random() * 0.18
+    });
+  }
+
+  function drawBackground(t) {
+    // ท้องฟ้าไล่สีพลบค่ำ -> กลางคืน
+    const grad = ctx.createLinearGradient(0, 0, 0, groundY);
+    grad.addColorStop(0, '#161a35');
+    grad.addColorStop(0.45, '#3a2c56');
+    grad.addColorStop(0.75, '#6a4160');
+    grad.addColorStop(1, '#a45a4f');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, W, groundY);
+
+    // ดวงดาว (กระพริบเบา ๆ)
+    stars.forEach(st => {
+      const tw = 0.5 + 0.5 * Math.sin(t / 300 + st.tw);
+      ctx.fillStyle = `rgba(255,255,255,${0.4 + 0.5 * tw})`;
+      ctx.fillRect(Math.round(st.x), Math.round(st.y), st.s, st.s);
+    });
+
+    // ดวงจันทร์ (บล็อกพิกเซล)
+    drawMoon(W - 110, 46);
+
+    // ก้อนเมฆลอยเบา ๆ ยามค่ำคืน
+    drawClouds(t);
+
+    // เนินหญ้า/พุ่มไม้พื้นหลังไกล ๆ แบบบล็อก
+    ctx.fillStyle = '#1e2b22';
+    for (let i = 0; i < 6; i++) {
+      const bx = ((i * 170 - groundOffset * 0.25) % (W + 170)) - 85;
+      drawBushBlock(bx, groundY - 34, 70, 34, '#1e2b22');
+    }
+
+    // เสาไฟสวน พร้อมแสงเรืองเหลือง
+    lampPosts.forEach(baseX => {
+      const lx = ((baseX - groundOffset * 0.6) % (W + 200) + (W + 200)) % (W + 200) - 100;
+      drawLampPost(lx, groundY);
+    });
+
+    // ทางเดินในสวน
+    ctx.fillStyle = '#3a3a42';
+    ctx.fillRect(0, groundY, W, H - groundY);
+    ctx.fillStyle = '#233a27';
+    ctx.fillRect(0, groundY, W, 8);
+    // เส้นแบ่งทางเดินแบบพิกเซล
+    ctx.fillStyle = 'rgba(255,255,255,0.15)';
+    const stripeW = 36;
+    for (let x = -((groundOffset) % stripeW); x < W; x += stripeW) {
+      ctx.fillRect(x, groundY + 22, 16, 4);
+    }
+  }
+
+  function drawMoon(cx, cy) {
+    ctx.fillStyle = '#fdf3d0';
+    // วาดวงกลมแบบพิกเซล (บล็อกสี่เหลี่ยมประกอบ)
+    const r = 18;
+    for (let yy = -r; yy <= r; yy += 4) {
+      const xw = Math.sqrt(Math.max(r * r - yy * yy, 0));
+      ctx.fillRect(Math.round(cx - xw), Math.round(cy + yy), Math.round(xw * 2), 4);
+    }
+    ctx.fillStyle = 'rgba(200,180,140,0.5)';
+    ctx.fillRect(cx - 6, cy - 4, 5, 5);
+    ctx.fillRect(cx + 3, cy + 6, 4, 4);
+  }
+
+  function drawCloudBlock(x, y, scale, alpha) {
+    ctx.fillStyle = `rgba(230,225,245,${alpha})`;
+    const s = scale;
+    // ก้อนเมฆพิกเซลแบบบล็อกซ้อนกัน ให้เข้ากับโทนฟ้ายามพลบค่ำ/กลางคืน
+    ctx.fillRect(Math.round(x), Math.round(y + 6 * s), Math.round(46 * s), Math.round(10 * s));
+    ctx.fillRect(Math.round(x + 8 * s), Math.round(y), Math.round(22 * s), Math.round(8 * s));
+    ctx.fillRect(Math.round(x + 26 * s), Math.round(y + 2 * s), Math.round(16 * s), Math.round(8 * s));
+    ctx.fillRect(Math.round(x - 6 * s), Math.round(y + 8 * s), Math.round(10 * s), Math.round(6 * s));
+  }
+
+  function drawClouds(t) {
+    clouds.forEach(c => {
+      const span = W + 320;
+      const cx = ((c.baseX - groundOffset * c.speedMul) % span + span) % span - 160;
+      drawCloudBlock(cx, c.y, c.scale, c.alpha);
+    });
+  }
+
+  function drawBushBlock(x, y, w, h, color) {
+    ctx.fillStyle = color;
+    ctx.fillRect(x, y + 10, w, h - 10);
+    ctx.fillRect(x + 8, y, w - 16, 14);
+  }
+
+  function drawLampPost(x, groundY) {
+    // เสา
+    ctx.fillStyle = '#2a2a30';
+    ctx.fillRect(x - 2, groundY - 70, 4, 70);
+    ctx.fillRect(x - 8, groundY - 6, 16, 6);
+    // หัวโคม
+    ctx.fillStyle = '#2a2a30';
+    ctx.fillRect(x - 8, groundY - 84, 16, 14);
+    // แสงเรือง
+    const glow = ctx.createRadialGradient(x, groundY - 77, 2, x, groundY - 77, 40);
+    glow.addColorStop(0, 'rgba(255,225,140,0.55)');
+    glow.addColorStop(1, 'rgba(255,225,140,0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(x - 40, groundY - 117, 80, 80);
+    ctx.fillStyle = '#ffe28a';
+    ctx.fillRect(x - 5, groundY - 82, 10, 10);
+  }
+
+  function drawDecorations(t) {
+    decorations.forEach(d => {
+      if (d.type === 'bat') {
+        const flap = Math.sin(t / 90 + d.x) > 0;
+        ctx.fillStyle = '#151018';
+        ctx.fillRect(d.x + 4, d.y, d.w - 8, 4);
+        if (flap) {
+          ctx.fillRect(d.x, d.y - 3, 6, 5);
+          ctx.fillRect(d.x + d.w - 6, d.y - 3, 6, 5);
+        } else {
+          ctx.fillRect(d.x, d.y + 2, 6, 5);
+          ctx.fillRect(d.x + d.w - 6, d.y + 2, 6, 5);
+        }
+      } else {
+        const glow = 0.5 + 0.5 * Math.sin(t / 150 + d.phase);
+        ctx.fillStyle = `rgba(220,255,120,${0.4 + 0.6 * glow})`;
+        ctx.fillRect(Math.round(d.x), Math.round(d.y + Math.sin(t / 300 + d.phase) * 6), d.w, d.h);
+      }
+    });
+  }
+
+  // เด็กหญิงใส่แว่น สไตล์พิกเซล
+  function drawPlayer() {
+    const blinking = player.invincibleUntil && performance.now() < player.invincibleUntil;
+    if (blinking && Math.floor(performance.now() / 100) % 2 === 0) return;
+    const x = Math.round(player.x), y = Math.round(player.y);
+
+    // ผมพวงหางม้า (ด้านหลัง)
+    ctx.fillStyle = '#3a2417';
+    ctx.fillRect(x + 22, y + 4, 7, 14);
+    ctx.fillRect(x + 26, y + 14, 5, 8);
+
+    // ทรงผมด้านบน
+    ctx.fillStyle = '#4a2f1c';
+    ctx.fillRect(x + 2, y, 22, 8);
+    ctx.fillRect(x, y + 4, 26, 6);
+
+    // โบว์ผูกผมสีชมพู น่ารัก ๆ ที่โคนหาง
+    ctx.fillStyle = '#ff8fbb';
+    ctx.fillRect(x + 20, y + 2, 4, 4);
+    ctx.fillRect(x + 27, y + 2, 4, 4);
+    ctx.fillStyle = '#e2508f';
+    ctx.fillRect(x + 23, y + 3, 4, 3);
+
+    // หน้า (สีผิว)
+    ctx.fillStyle = '#ffd7ad';
+    ctx.fillRect(x + 4, y + 8, 18, 12);
+
+    // แว่นตา
+    ctx.fillStyle = '#1c1c1c';
+    ctx.fillRect(x + 5, y + 12, 6, 6);
+    ctx.fillRect(x + 15, y + 12, 6, 6);
+    ctx.fillRect(x + 11, y + 14, 4, 2);
+    ctx.fillStyle = '#bfe9ff';
+    ctx.fillRect(x + 6, y + 13, 4, 4);
+    ctx.fillRect(x + 16, y + 13, 4, 4);
+
+    // แก้ม
+    ctx.fillStyle = 'rgba(255,140,140,0.5)';
+    ctx.fillRect(x + 5, y + 18, 3, 2);
+    ctx.fillRect(x + 18, y + 18, 3, 2);
+
+    // ลำตัว/ชุดเดรส (สีชมพู) ทรงเพรียวบาง
+    ctx.fillStyle = '#ff6fa8';
+    ctx.fillRect(x + 4, y + 20, 18, 8);
+    ctx.fillStyle = '#ff8fbb';
+    ctx.fillRect(x + 2, y + 26, 22, 10); // กระโปรงบาน
+    ctx.fillStyle = '#e2508f';
+    ctx.fillRect(x + 2, y + 33, 22, 3);
+
+    // แขน (สีผิว) เรียวบาง
+    ctx.fillStyle = '#ffd7ad';
+    ctx.fillRect(x + 1, y + 21, 3, 8);
+    ctx.fillRect(x + 22, y + 21, 3, 8);
+
+    // ขา/รองเท้า
+    ctx.fillStyle = '#ffd7ad';
+    ctx.fillRect(x + 6, y + 36, 5, 4);
+    ctx.fillRect(x + 15, y + 36, 5, 4);
+    ctx.fillStyle = '#2a2a2a';
+    ctx.fillRect(x + 4, y + 39, 8, 4);
+    ctx.fillRect(x + 13, y + 39, 8, 4);
+  }
+
+  function drawObstacles() {
+    obstacles.forEach(o => {
+      const x = Math.round(o.x), y = Math.round(o.y);
+      if (o.type === 'bench') {
+        ctx.fillStyle = '#6b4a2c';
+        ctx.fillRect(x, y, o.w, 6);
+        ctx.fillRect(x, y + 10, o.w, 6);
+        ctx.fillStyle = '#3f2c19';
+        ctx.fillRect(x + 2, y + 16, 4, 6);
+        ctx.fillRect(x + o.w - 6, y + 16, 4, 6);
+      } else if (o.type === 'trash') {
+        ctx.fillStyle = '#555b63';
+        ctx.fillRect(x, y + 4, o.w, o.h - 4);
+        ctx.fillStyle = '#3d4147';
+        ctx.fillRect(x - 2, y, o.w + 4, 6);
+      } else if (o.type === 'bush') {
+        drawBushBlock(x, y, o.w, o.h, '#2c5535');
+        ctx.fillStyle = '#3d7048';
+        ctx.fillRect(x + 4, y + 2, o.w - 8, 6);
+      } else if (o.type === 'hydrant') {
+        ctx.fillStyle = '#c9403a';
+        ctx.fillRect(x + 3, y, o.w - 6, o.h - 4);
+        ctx.fillRect(x, y + 4, o.w, 6);
+        ctx.fillStyle = '#8a2823';
+        ctx.fillRect(x + 3, y + o.h - 4, o.w - 6, 4);
+      }
+    });
+  }
+
+  function rectsOverlap(a, b) {
+    return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+  }
+
+  function loop(ts) {
+    if (!running) return;
+    if (!lastTimestamp) lastTimestamp = ts;
+    const dt = Math.min((ts - lastTimestamp) / 1000, 0.05);
+    lastTimestamp = ts;
+    update(dt);
+    render(ts);
+    if (running) requestAnimationFrame(loop);
+  }
+
+  function update(dt) {
+    timerAccumulator += dt;
+    if (timerAccumulator >= 1) {
+      timerAccumulator -= 1;
+      timeLeft -= 1;
+      timeBox.textContent = 'Time: ' + Math.max(timeLeft, 0);
+      if (timeLeft <= 0) { endGame('timeup'); return; }
+    }
+
+    groundOffset = (groundOffset + groundSpeed * dt) % 10000;
+
+    player.vy += player.gravity * dt;
+    player.y += player.vy * dt;
+    if (player.y > groundY - player.h) { player.y = groundY - player.h; player.vy = 0; player.jumping = false; }
+
+    obstacleTimer += dt;
+    if (obstacleTimer >= nextObstacleGap) { obstacleTimer = 0; nextObstacleGap = randomObstacleGap(); spawnObstacle(); }
+
+    decoTimer += dt;
+    if (decoTimer >= nextDecoGap) { decoTimer = 0; nextDecoGap = randomDecoGap(); spawnDecoration(); }
+
+    obstacles.forEach(o => { o.x -= groundSpeed * dt; });
+    obstacles = obstacles.filter(o => o.x + o.w > -10);
+
+    decorations.forEach(d => { d.x -= groundSpeed * dt * d.speedMul; });
+    decorations = decorations.filter(d => d.x > -40);
+
+    const playerBox = { x: player.x, y: player.y, w: player.w, h: player.h };
+    const invincible = player.invincibleUntil && performance.now() < player.invincibleUntil;
+    obstacles.forEach(o => {
+      if (!o.passed && o.x + o.w < player.x) { o.passed = true; score += 10; scoreBox.textContent = 'Score: ' + score; }
+      if (!invincible && rectsOverlap(playerBox, o)) { o.passed = true; o.x = -999; loseLife(); }
+    });
+  }
+
+  function render(ts) {
+    ctx.clearRect(0, 0, W, H);
+    drawBackground(ts);
+    drawDecorations(ts);
+    drawObstacles();
+    drawPlayer();
+  }
+
+  updateHearts();
+})();
+</script>
+</body>
+</html>
